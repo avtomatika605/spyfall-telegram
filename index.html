@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Spyfall UZ</title>
+    <!-- Telegram Web App Scripti -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <!-- Firebase Scriptlari -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+    <!-- Google Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700;900&display=swap" rel="stylesheet">
+    
+    <style>
+        :root { --bg: #0f0f1a; --card: #1b1b2f; --accent: #e43f5a; --text: #fff; }
+        body { 
+            background-color: var(--bg); color: var(--text); 
+            font-family: 'Montserrat', sans-serif; 
+            margin: 0; display: flex; justify-content: center; align-items: center; 
+            height: 100vh; overflow: hidden; user-select: none;
+        }
+        .screen { display: none; width: 100%; height: 100%; flex-direction: column; align-items: center; justify-content: center; padding: 20px; box-sizing: border-box; animation: fadeIn 0.3s; }
+        .active { display: flex; }
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+        
+        h1 { font-size: 40px; margin-bottom: 10px; text-transform: uppercase; color: var(--accent); text-shadow: 0 0 20px rgba(228, 63, 90, 0.4); }
+        button { 
+            background: var(--accent); color: white; border: none; padding: 15px 40px; 
+            border-radius: 50px; font-size: 18px; font-weight: bold; margin: 10px 0; 
+            width: 80%; max-width: 300px; cursor: pointer; transition: 0.2s; 
+            box-shadow: 0 5px 15px rgba(228, 63, 90, 0.3);
+        }
+        button:active { transform: scale(0.95); }
+        input { 
+            background: rgba(255,255,255,0.1); border: 2px solid var(--card); 
+            color: white; padding: 15px; border-radius: 50px; width: 70%; 
+            text-align: center; font-size: 18px; margin-bottom: 20px; outline: none; 
+        }
+        input:focus { border-color: var(--accent); }
+        
+        .player-list { list-style: none; padding: 0; width: 100%; max-width: 300px; }
+        .player-list li { background: var(--card); margin: 5px 0; padding: 12px; border-radius: 10px; display: flex; align-items: center; }
+        .player-list li::before { content: '👤'; margin-right: 10px; }
+
+        /* 3D KARTA */
+        .scene { width: 260px; height: 380px; perspective: 1000px; margin-top: 20px; }
+        .card { width: 100%; height: 100%; position: relative; transition: transform 0.8s; transform-style: preserve-3d; }
+        .card.flipped { transform: rotateY(180deg); }
+        .face { position: absolute; width: 100%; height: 100%; backface-visibility: hidden; border-radius: 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        .front { background: linear-gradient(45deg, #162447, #1f4068); border: 2px solid #e43f5a; }
+        .back { background: white; color: black; transform: rotateY(180deg); text-align: center; padding: 10px; }
+    </style>
+</head>
+<body>
+
+    <!-- 1. MENU -->
+    <div id="screen-menu" class="screen active">
+        <h1>SPYFALL</h1>
+        <p>Telegram Gaming Platform</p>
+        <button onclick="createGame()">Yangi O'yin</button>
+        <div style="height: 10px;"></div>
+        <input type="number" id="join-code" placeholder="Xona kodi" />
+        <button onclick="joinGame()" style="background: transparent; border: 2px solid var(--accent);">Ulanish</button>
+    </div>
+
+    <!-- 2. LOBBY -->
+    <div id="screen-lobby" class="screen">
+        <p>XONA KODI:</p>
+        <h1 id="lobby-code" style="font-size: 50px; margin: 0;">...</h1>
+        <ul id="player-list" class="player-list"></ul>
+        <button id="btn-start" onclick="startGame()" style="display:none;">BOSHLASH 🚀</button>
+        <p id="wait-msg">Host boshlashi kutilmoqda...</p>
+    </div>
+
+    <!-- 3. GAME -->
+    <div id="screen-game" class="screen">
+        <h2>ROLINGIZ</h2>
+        <div class="scene">
+            <div class="card" onclick="flipCard(this)">
+                <div class="face front">
+                    <h1 style="font-size: 60px;">?</h1>
+                    <p>BOSING</p>
+                </div>
+                <div class="face back">
+                    <h2 id="role-title" style="color: var(--accent);">...</h2>
+                    <p id="role-desc">...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+    // --- 1. FIREBASE SOZLAMALARI (SHU YERNI O'ZGARTIRING) ---
+    const firebaseConfig = {
+        apiKey: "AIzaSyD......", // Firebase konsolidan olingan kod
+        authDomain: "spyfall-uz.firebaseapp.com",
+        databaseURL: "https://spyfall-uz-default-rtdb.firebaseio.com", // Database URL muhim!
+        projectId: "spyfall-uz",
+        storageBucket: "spyfall-uz.appspot.com",
+        messagingSenderId: "...",
+        appId: "..."
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+    
+    // --- 2. TELEGRAM VA GLOBALLAR ---
+    const tg = window.Telegram.WebApp;
+    tg.expand(); // O'yinni to'liq ekranda ochish
+    tg.ready();
+
+    let myUser = tg.initDataUnsafe.user || { id: Date.now(), first_name: "Guest" }; // Agar brauzerda ochsa Guest bo'ladi
+    let gameId = null;
+    let isHost = false;
+
+    // --- 3. NAVIGATSIYA ---
+    function showScreen(id) {
+        document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+        document.getElementById(id).classList.add('active');
+        if(tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+    }
+
+    // --- 4. O'YIN LOGIKASI ---
+    
+    // Yaratish
+    function createGame() {
+        gameId = Math.floor(10000 + Math.random() * 90000).toString(); // 5 xonali kod
+        isHost = true;
+        
+        // Bazaga yozamiz
+        db.ref('games/' + gameId).set({
+            status: 'lobby',
+            host: myUser.id,
+            players: { [myUser.id]: { name: myUser.first_name, role: '' } }
+        });
+
+        enterLobby();
+    }
+
+    // Ulanish
+    function joinGame() {
+        let code = document.getElementById('join-code').value;
+        if(!code) return tg.showAlert("Kodni kiriting!");
+        
+        db.ref('games/' + code).once('value', snapshot => {
+            if(snapshot.exists()) {
+                gameId = code;
+                isHost = false;
+                // O'zimizni qo'shamiz
+                db.ref('games/' + code + '/players/' + myUser.id).set({
+                    name: myUser.first_name, role: ''
+                });
+                enterLobby();
+            } else {
+                tg.showAlert("O'yin topilmadi!");
+            }
+        });
+    }
+
+    function enterLobby() {
+        document.getElementById('lobby-code').innerText = gameId;
+        showScreen('screen-lobby');
+
+        // Real-time kuzatish (Eng muhim joyi!)
+        db.ref('games/' + gameId).on('value', snapshot => {
+            let data = snapshot.val();
+            if(!data) return;
+
+            // 1. O'yinchilar ro'yxatini yangilash
+            let list = document.getElementById('player-list');
+            list.innerHTML = '';
+            let count = 0;
+            for(let pid in data.players) {
+                let p = data.players[pid];
+                list.innerHTML += `<li>${p.name}</li>`;
+                count++;
+            }
+
+            // 2. Start tugmasi (faqat hostga)
+            if(isHost && count >= 3) document.getElementById('btn-start').style.display = 'block';
+            else document.getElementById('btn-start').style.display = 'none';
+
+            // 3. O'yin boshlanganda o'tish
+            if(data.status === 'started') {
+                let myRole = data.players[myUser.id].role;
+                let location = data.location;
+                setupGame(myRole, location);
+            }
+        });
+    }
+
+    function startGame() {
+        const locations = ["Choyxona", "Maktab", "Bozor", "Samolyot", "Kasalxona", "Sohil bo'yi"];
+        let loc = locations[Math.floor(Math.random() * locations.length)];
+        
+        // Rollarni taqsimlash
+        db.ref('games/' + gameId + '/players').once('value', s => {
+            let players = s.val();
+            let ids = Object.keys(players);
+            let spyIndex = Math.floor(Math.random() * ids.length);
+            
+            let updates = {};
+            updates['games/' + gameId + '/status'] = 'started';
+            updates['games/' + gameId + '/location'] = loc;
+            
+            ids.forEach((id, index) => {
+                let role = (index === spyIndex) ? 'Spy' : loc;
+                updates['games/' + gameId + '/players/' + id + '/role'] = role;
+            });
+            
+            db.ref().update(updates);
+        });
+    }
+
+    function setupGame(role, location) {
+        let title = document.getElementById('role-title');
+        let desc = document.getElementById('role-desc');
+        
+        if(role === 'Spy') {
+            title.innerText = "SIZ SHPIONSIZ";
+            title.style.color = "#e43f5a";
+            desc.innerText = "Joyni bilmaysiz. Bildirmay so'rang!";
+        } else {
+            title.innerText = location;
+            title.style.color = "#00b894";
+            desc.innerText = "Bu oddiy fuqaro kartasi.";
+        }
+        showScreen('screen-game');
+        if(tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+    }
+
+    function flipCard(el) {
+        if(el.classList.contains('flipped')) return;
+        el.classList.add('flipped');
+        if(tg.HapticFeedback) tg.HapticFeedback.impactOccurred('heavy');
+        
+        setTimeout(() => {
+            el.classList.remove('flipped');
+        }, 4000);
+    }
+
+</script>
+</body>
+</html>
